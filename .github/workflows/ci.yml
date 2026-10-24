@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: docs lint (links, anchors, structure)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: no third-party dependencies needed
+        run: python scripts/check_docs.py
+      - name: all expected chapters exist
+        run: |
+          set -e
+          for f in 01-why-blockchain 02-cryptography-basics 03-consensus 04-bitcoin \
+                   05-ethereum 06-smart-contracts 07-web3-stack 08-risks-future glossary; do
+            test -s "docs/$f.md" || { echo "missing docs/$f.md"; exit 1; }
+          done
+
+  external-links:
+    name: external links (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: check external URLs
+        run: python scripts/check_docs.py --external
+
+  encoding:
+    name: line endings and encoding
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no CRLF, no BOM, valid UTF-8
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          bad = []
+          for p in pathlib.Path('.').rglob('*'):
+              if '.git/' in str(p) or not p.is_file():
+                  continue
+              if p.suffix not in ('.md', '.py', '.yml', '.yaml', '.txt'):
+                  continue
+              raw = p.read_bytes()
+              if raw.startswith(b'\xef\xbb\xbf'):
+                  bad.append(f'{p}: BOM')
+              if b'\r\n' in raw:
+                  bad.append(f'{p}: CRLF')
+              try:
+                  raw.decode('utf-8')
+              except UnicodeDecodeError:
+                  bad.append(f'{p}: not UTF-8')
+          print('\n'.join(bad) if bad else 'clean')
+          sys.exit(1 if bad else 0)
+          PY
